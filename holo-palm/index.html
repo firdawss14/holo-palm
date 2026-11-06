@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<!--
+  HOLO-PALM · Hand-gesture 3D interface  (Three.js + MediaPipe Hand Landmarker)
+
+  HOW TO RUN LOCALLY
+  ------------------
+  1. Open a terminal in this folder (the one containing index.html and models/).
+  2. Start any static web server, for example:
+        python3 -m http.server 8000         (Python 3)
+        npx serve .                         (Node)
+        or the "Live Server" extension in VS Code
+  3. Open  http://localhost:8000  in Chrome, Edge or Firefox and click "Allow" for the camera.
+
+  WHY A LOCAL SERVER?
+  Browsers only expose the webcam (getUserMedia) on "secure contexts": https:// or
+  http://localhost. Opening index.html by double-click (file://) blocks the camera,
+  ES-module imports and the fetch() that reads models/manifest.json.
+
+  ADDING MODELS
+  Drop a .glb/.gltf into models/ and add one line to models/manifest.json
+  (browsers cannot list folders). No code changes needed.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>HOLO-PALM · Gesture 3D Interface</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+
+  <!-- Libraries from CDN, resolved through an import map (used by the ES modules) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+      "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs"
+    }
+  }
+  </script>
+</head>
+
+<body>
+<main class="app">
+
+  <!-- ───────────── LEFT 50% · live camera + 3D ───────────── -->
+  <section class="stage" id="stage" aria-label="Live camera with 3D object">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="three-canvas"></canvas>   <!-- Three.js (transparent) -->
+    <canvas id="overlay-canvas"></canvas> <!-- hand skeleton + star landmarks -->
+
+    <div class="vignette"></div>
+    <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+
+    <div class="stage-tag"><span class="rec-dot"></span> LIVE · MIRRORED</div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <!-- loading -->
+    <div class="overlay" id="loading">
+      <div class="loader-ring"></div>
+      <h2>Initialising interface</h2>
+      <p id="loading-text">Starting…</p>
+      <ul class="load-steps">
+        <li id="step-camera"  data-state="wait"><i></i>Camera</li>
+        <li id="step-track"   data-state="wait"><i></i>Hand tracking model</li>
+        <li id="step-models"  data-state="wait"><i></i>3D models</li>
+      </ul>
+    </div>
+
+    <!-- error -->
+    <div class="overlay hidden" id="error" role="alert">
+      <div class="err-icon">!</div>
+      <h2 id="error-title">Something went wrong</h2>
+      <p id="error-text"></p>
+      <button id="retry" type="button">Try again</button>
+    </div>
+  </section>
+
+  <!-- ───────────── RIGHT 50% · dashboard ───────────── -->
+  <aside class="dashboard" aria-label="Control dashboard">
+    <header class="dash-head">
+      <div>
+        <h1>HOLO<span>·</span>PALM</h1>
+        <p>Gesture control interface</p>
+      </div>
+      <div class="chips">
+        <div class="chip" id="cam-chip" data-state="loading">
+          <span class="dot"></span><span class="chip-label">CAMERA</span><b id="cam-text">Starting</b>
+        </div>
+        <div class="chip" id="track-chip" data-state="loading">
+          <span class="radar"></span><span class="chip-label">TRACKING</span><b id="track-text">Loading</b>
+        </div>
+      </div>
+    </header>
+
+    <section class="grid">
+      <article class="card">
+        <h3>Hands detected</h3>
+        <div class="big" id="hand-count">0</div>
+        <div class="slots">
+          <span class="slot" id="slot-primary"><i></i>Primary</span>
+          <span class="slot" id="slot-secondary"><i></i>Secondary</span>
+        </div>
+      </article>
+
+      <article class="card">
+        <h3>Tracking status</h3>
+        <div class="value" id="track-status">Initialising</div>
+        <div class="sub" id="fps-line">— fps</div>
+      </article>
+
+      <article class="card">
+        <h3>Selected object</h3>
+        <div class="value" id="object-name">Loading…</div>
+        <div class="sub" id="object-index">—</div>
+        <div class="dots" id="object-dots"></div>
+      </article>
+
+      <article class="card">
+        <h3>Object scale</h3>
+        <div class="value" id="scale-value">×1.00</div>
+        <div class="bar"><i id="scale-bar"></i></div>
+      </article>
+    </section>
+
+    <section class="card gestures">
+      <h3>Detected gesture</h3>
+      <div class="g-row"><span class="g-role p">PRIMARY</span><b id="gesture-primary">— no hand —</b></div>
+      <div class="g-row"><span class="g-role s">SECONDARY</span><b id="gesture-secondary">— no hand —</b></div>
+      <div class="g-row last"><span class="g-role a">LAST ACTION</span><b id="last-action">—</b></div>
+    </section>
+
+    <section class="card how">
+      <h3>How to use</h3>
+      <div class="how-cols">
+        <div>
+          <h4><span class="g-role p">PRIMARY HAND</span> object</h4>
+          <ol>
+            <li data-key="p-open"><b>Open palm</b> – the model appears above it</li>
+            <li data-key="p-move"><b>Move</b> your hand – the model follows</li>
+            <li data-key="p-fist"><b>Close fist</b> – it bursts into star particles</li>
+            <li data-key="p-reopen"><b>Reopen</b> – the stars reassemble it</li>
+          </ol>
+        </div>
+        <div>
+          <h4><span class="g-role s">SECONDARY HAND</span> controls</h4>
+          <ol>
+            <li data-key="s-pinch"><b>Pinch</b> thumb + index – scale up</li>
+            <li data-key="s-spread"><b>Spread</b> thumb + index – scale down</li>
+            <li data-key="s-fist"><b>Close fist</b> – switch to the next model</li>
+            <li data-key="s-move"><b>Move</b> your hand – rotate the model</li>
+          </ol>
+        </div>
+      </div>
+      <p class="hint">Show one hand first – it becomes the <em>primary</em>. The second hand you raise is the <em>secondary</em>.</p>
+    </section>
+  </aside>
+</main>
+
+<script type="module" src="script.js"></script>
+</body>
+</html>

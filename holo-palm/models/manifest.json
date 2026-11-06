@@ -1,0 +1,10 @@
+{
+  "models": [
+    { "name": "Iron Man Mk VII",   "file": "iron_man_mk7.glb" },
+    { "name": "Gipsy Danger",      "file": "gipsy_danger_no_rigged_bone_pacific_rim.glb" },
+    { "name": "Optimus Prime",     "file": "knight_optimus_prime_with_improved_textures.glb" },
+    { "name": "Bumblebee",         "file": "transformers_2007_movie_bumblebee_1977.glb" },
+    { "name": "War Machine",       "file": "war_machine_-_fortnite_skin.glb" },
+    { "name": "Ultron",            "file": "ultron.glb" }
+  ]
+}
